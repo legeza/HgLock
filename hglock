@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+
+########################################################
+#                                                      #
+# File locking of Mercurial.                           #
+#                                                      #
+# Version: 1.5                                         #
+# Date:    20.11.2008                                  #
+# Author:  Legeza Vladimir <vladimir.legeza@gmail.com> #
+#                                                      #
+########################################################
+
+##########################
+# Variables
+##########################
+# Name of file for locks store.
+locksfile_name=locksfile
+DATE=`date +"%H:%M %d.%m.%Y "`
+##########################
+
+usage(){
+cat<<EOF
+Usage:
+$ $0 <Options> file_name
+Options:
+    Without options: Lock
+ -u Unlock
+ -v Verbose
+ -h help
+ -A auto lock files when adding
+ -C auto unlock files with commit operation
+ -I install autolock|unlock hooks
+EOF
+}
+
+chk_lock(){
+# Args: $1 - pattern; $2 - locks file
+# Return 0 - set; 1 - not set
+if [ -f $2 ]; then
+	grep "${1}:.*:.*" $2 > /dev/null 
+	return $?
+else
+	return 1
+fi
+}
+
+##########################################
+# Options
+##########################################
+while getopts uvhICA option 
+do
+	case $option in 
+	u)	OPERATION=unlock
+		;;
+	v)	VERBOSE=1
+		;;
+	A)	OPERATION=add_lock
+		;;
+	C)	OPERATION=ci_unlock
+		;;
+	I)	OPERATION=install_hooks
+		;;
+	*)	usage
+		;;
+	esac
+done
+
+if [ "x$OPERATION" == 'x' ]; then
+	OPERATION=lock
+fi
+
+################
+# Get file names 
+################
+case $OPERATION in
+lock|unlock)
+	shift $(($OPTIND - 1))
+	if [ "x$*" == 'x' ]; then
+		hg_root=`hg root || exit $?`
+        	lock_file=$hg_root/.hg/$locksfile_name	
+		if [ -f $lock_file ]; then
+			if [ "x$VERBOSE" == 'x1' ]; then
+				echo "Repository: $hg_root"
+				echo "Lockfile: $lock_file"
+				echo
+				cat $lock_file|awk -F: '{print $1"  by \""$2"\" at "$3":"$4}'
+			else
+				cat $lock_file|awk -F: '{print $1}'
+			fi
+		else
+			usage
+		fi
+		exit
+	else
+		lockfiles=$*
+	fi
+	;;
+add_lock)
+	for i in $HG_ARGS; do HG_ARGS_REV="$i $HG_ARGS_REV"; done
+	
+	for i in $HG_ARGS_REV
+	do
+		if [ -f $i ]; then
+			lockfiles="$i $lockfiles"
+		else
+			break
+		fi
+	done
+	OPERATION=lock
+	;;
+
+ci_unlock)
+	for i in $HG_ARGS; do HG_ARGS_REV="$i $HG_ARGS_REV"; done
+	
+	for i in $HG_ARGS_REV
+	do
+		if [ -f $i ]; then
+			lockfiles="$i $lockfiles"
+		else
+			break
+		fi
+	done
+	OPERATION=unlock
+	# Empty list means, that we need to remove all locks
+	if [ "x$lockfiles" == 'x' ]; then
+		if [ -f `hg root`/.hg/$locksfile_name ]; then
+			echo -n > `hg root`/.hg/$locksfile_name
+		fi
+	fi
+	;;
+install_hooks)
+	cat >> `hg root`/.hg/hgrc<<EOF
+[hooks]
+post-commit = hglock -C
+post-add = hglock -A
+EOF
+	;;
+esac
+
+#######################
+# MAIN LOOP
+#######################
+for lockf in $lockfiles
+do
+ if [ -f $lockf ]; then
+	cd `dirname $lockf`
+	# Lookeing for repository 
+	hg_root=`hg root || exit $?`
+	lock_file=$hg_root/.hg/$locksfile_name
+	
+	hg_root_m=`hg root|sed -e 's/\//\\\\\//g'`
+	hg_lockf=`echo \`pwd\`/\`basename $lockf\` | sed -e "s/^$hg_root_m//" -e "s/^\///"`
+	if ( ! hg locate|grep ^${hg_lockf}$ >/dev/null ); then
+		echo "Error: file is not found in the repository!"
+		exit 1
+	fi
+	
+	################
+	# Verbose
+	if [ "x$VERBOSE" == 'x1' ]; then
+		echo "Repository: $hg_root"
+		echo "File in repository: $hg_lockf"
+		echo "Lockfile: $lock_file"
+	fi
+		
+	################
+	# Operation
+	case $OPERATION in
+	lock)
+		if ( ! chk_lock $hg_lockf $lock_file ); then
+			echo "$hg_lockf:`who am i|awk '{print $1}'`:$DATE" >>$lock_file 
+		else
+			grep "${hg_lockf}:.*:.*" $lock_file|awk -F: '{print "File already locked by \""$2"\" at "$3":"$4"."}'
+			exit 1
+		fi
+		;;
+	unlock)
+		if ( chk_lock $hg_lockf $lock_file ); then
+			hg_lockf_m=`echo $hg_lockf|sed -e 's/\//\\\\\//g'`
+			sed -e "/$hg_lockf_m:.*:.*/d" $lock_file > $lock_file.tmp \
+			&& mv $lock_file.tmp $lock_file
+		else
+			echo "Error: file \"$lockf\" not locked!"
+			exit 1
+		fi
+		;;
+	esac
+ else
+	echo "Error: file $lockf not found."
+ fi
+done
+exit 0

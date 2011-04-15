@@ -1,0 +1,33 @@
+HgLock is a simple tool providing ability to set lock on a files
+traced by Mercurial. It helps to prevent incoherent modifications
+of a single shared file by more the one user at a time.
+
+Usage:
+$ hglock <Options> file_name
+
+Options:
+	Without options: Lock
+	-u Unlock
+	-v Verbose
+	-h help
+	-A auto lock files when adding
+	-C auto unlock files with commit operation
+	-I install autolock|unlock hooks
+
+#################################################################
+
+Before make chandegs in a shared file set the lock on it. 
+(Basic rule!)
+
+# hglock /etc/nginx/nginx.conf
+
+If anyone else would like to modify the same file and try to set the
+lock, it will get an notification message that file are used by you
+at the moment.
+
+# hglock /etc/nginx/nginx.conf
+File already locked by "root" at 15:12 15.04.2011 .
+
+When all modification were done, release the file.
+
+# hglock -u /etc/nginx/nginx.conf
